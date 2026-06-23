@@ -1,9 +1,11 @@
 """
 arcade/common/bgm.py
-BGM 토글 & 사운드 시스템 (수정 버전)
+BGM 토글 & 사운드 시스템 (싱글톤 오디오 매니저 수정 버전)
 """
 import streamlit as st
 from common.theme import THEMES
+import streamlit.components.v1 as components
+import json  # 패턴 데이터 직렬화를 위해 추가
 
 _BGM_ON_KEY  = "audio_bgm_on"
 _SFX_ON_KEY  = "audio_sfx_on"
@@ -134,10 +136,10 @@ _SFX_SCRIPTS = {
 }
 
 _BGM_PATTERNS = {
-    "galaga":         "[[262,0.15],[330,0.15],[392,0.15],[523,0.15],[392,0.15],[330,0.15]]",
-    "tetris":         "[[659,0.2],[494,0.1],[523,0.1],[587,0.2],[523,0.1],[494,0.1],[440,0.2]]",
-    "pacman":         "[[494,0.1],[523,0.1],[587,0.1],[659,0.1],[587,0.1],[523,0.1]]",
-    "space_invaders": "[[110,0.1],[110,0.1],[165,0.1],[110,0.1]]",
+    "galaga":         [[262,0.15],[330,0.15],[392,0.15],[523,0.15],[392,0.15],[330,0.15]],
+    "tetris":         [[659,0.2],[494,0.1],[523,0.1],[587,0.2],[523,0.1],[494,0.1],[440,0.2]],
+    "pacman":         [[494,0.1],[523,0.1],[587,0.1],[659,0.1],[587,0.1],[523,0.1]],
+    "space_invaders": [[110,0.1],[110,0.1],[165,0.1],[110,0.1]],
 }
 
 
@@ -150,56 +152,214 @@ def play_sfx(sfx_name):
     if not script:
         return
     vol = get_volume()
+    
+    # JS 내부에 전달할 때 백슬래시 및 개행 안전하게 이스케이프 처리
+    escaped_script = script.replace("\\", "\\\\").replace("`", "\\`").replace("\n", " ")
+    
     html = f"""
 <script>
 (function(){{
+  var parentWin = null;
   try {{
-    var ctx=new(window.AudioContext||window.webkitAudioContext)();
-    var vol={vol:.2f};
-    var t=ctx.currentTime+0.01;
-    {script}
-  }} catch(e) {{ console.warn('SFX error:', e); }}
+    if (window.parent && window.parent.document) {{
+      parentWin = window.parent;
+    }}
+  }} catch (e) {{}}
+  var win = parentWin || window;
+  
+  // 전역 매니저가 존재하는 경우 오디오 컨텍스트 재사용
+  if (win.__arcade_audio_manager) {{
+    win.__arcade_audio_manager.playSfx(`{escaped_script}`);
+  }} else {{
+    // 로컬 폴백 (매니저 로드 전이거나 크로스오리진 격리 상태 대비)
+    try {{
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var vol = {vol:.2f};
+      var t = ctx.currentTime + 0.01;
+      {script}
+    }} catch(e) {{ console.warn('SFX Error:', e); }}
+  }}
 }})();
 </script>"""
-    st.markdown(html, unsafe_allow_html=True)
+    components.html(
+        html,
+        height=0,
+        scrolling=False
+    )
 
 
 def init_audio(game="galaga"):
-    """BGM 초기화."""
+    """BGM 초기화 및 오디오 상태 동기화 (MUTE 대응을 위해 항상 실행되어야 함)."""
     _ensure()
-    if not is_bgm_on():
-        return
     vol     = get_volume()
-    pattern = _BGM_PATTERNS.get(game, _BGM_PATTERNS["galaga"])
+    bgm_on  = "true" if is_bgm_on() else "false"
+    sfx_on  = "true" if is_sfx_on() else "false"
+    
+    patterns_json = json.dumps(_BGM_PATTERNS)
+    
     html = f"""
 <script>
 (function(){{
-  if(window._arcadeBgmActive) return;
+  // 1. 메인 창(부모 윈도우) 참조 시도 (크로스 도메인 에러 가드 구현)
+  var parentDoc = null;
+  var parentWin = null;
   try {{
-    var ctx=new(window.AudioContext||window.webkitAudioContext)();
-    window._arcadeBgmActive=true;
-    var vol={vol:.2f};
-    var notes={pattern};
-    var idx=0;
-    var t=ctx.currentTime;
-    function next(){{
-      if(!window._arcadeBgmActive) return;
-      var n=notes[idx%notes.length];
-      var o=ctx.createOscillator();
-      var g=ctx.createGain();
-      o.connect(g);g.connect(ctx.destination);
-      o.type='square';o.frequency.value=n[0];
-      g.gain.setValueAtTime(vol*0.2,t);
-      g.gain.exponentialRampToValueAtTime(0.001,t+n[1]*0.85);
-      o.start(t);o.stop(t+n[1]);
-      t+=n[1];idx++;
-      setTimeout(next,n[1]*1000-20);
+    if (window.parent && window.parent.document) {{
+      parentDoc = window.parent.document;
+      parentWin = window.parent;
     }}
-    next();
-  }} catch(e){{ console.warn('BGM error:',e); }}
+  }} catch (e) {{
+    console.warn("Parent access blocked (cross-origin or sandboxed):", e);
+  }}
+  
+  var doc = parentDoc || document;
+  var win = parentWin || window;
+
+  // 2. 부모 창 전역 스코프에 싱글톤 오디오 매니저 선언 (Streamlit Rerun 시 유지됨)
+  if (!win.__arcade_audio_manager) {{
+    win.__arcade_audio_manager = {{
+      ctx: null,
+      bgmActive: false,
+      bgmCurrentGame: null,
+      bgmTimeoutId: null,
+      volume: {vol:.2f},
+      bgmOn: {bgm_on},
+      sfxOn: {sfx_on},
+      bgmGame: null,
+      
+      initCtx: function() {{
+        if (this.ctx) return this.ctx;
+        try {{
+          var AudioContextClass = win.AudioContext || win.webkitAudioContext;
+          this.ctx = new AudioContextClass();
+          this.setupUnlock();
+        }} catch(e) {{
+          console.error("AudioContext initialization failed:", e);
+        }}
+        return this.ctx;
+      }},
+      
+      // 브라우저 자동 재생(Autoplay Policy) 해제를 위한 상호작용 리스너 등록
+      setupUnlock: function() {{
+        var self = this;
+        function unlock() {{
+          if (self.ctx && self.ctx.state === 'suspended') {{
+            self.ctx.resume().then(function() {{
+              console.log("AudioContext unlocked and resumed.");
+            }});
+          }}
+          ['click', 'touchstart', 'keydown'].forEach(function(evt) {{
+            doc.removeEventListener(evt, unlock);
+            document.removeEventListener(evt, unlock);
+          }});
+        }}
+        ['click', 'touchstart', 'keydown'].forEach(function(evt) {{
+          doc.addEventListener(evt, unlock, {{ passive: true }});
+          document.addEventListener(evt, unlock, {{ passive: true }});
+        }});
+      }},
+      
+      stopBgm: function() {{
+        this.bgmActive = false;
+        if (this.bgmTimeoutId) {{
+          clearTimeout(this.bgmTimeoutId);
+          this.bgmTimeoutId = null;
+        }}
+        this.bgmCurrentGame = null;
+      }},
+      
+      playBgm: function(game, patterns) {{
+        var self = this;
+        this.bgmGame = game;
+        if (!this.bgmOn) {{
+          this.stopBgm();
+          return;
+        }}
+        
+        this.initCtx();
+        if (!this.ctx) return;
+        
+        // 이미 해당 게임 BGM이 재생 중이라면 중복 플레이 차단 (핵심 버그 수정)
+        if (this.bgmActive && this.bgmCurrentGame === game) {{
+          return;
+        }}
+        
+        this.stopBgm();
+        this.bgmActive = true;
+        this.bgmCurrentGame = game;
+        
+        var notes = patterns[game] || patterns["galaga"];
+        var idx = 0;
+        
+        function next() {{
+          if (!self.bgmActive || !self.bgmOn) return;
+          
+          // 오디오 상태가 대기 중(suspended)이라면 자동 재생이 풀릴 때까지 대기
+          if (self.ctx.state === 'suspended') {{
+            self.bgmTimeoutId = setTimeout(next, 500);
+            return;
+          }}
+          
+          var n = notes[idx % notes.length];
+          var o = self.ctx.createOscillator();
+          var g = self.ctx.createGain();
+          o.connect(g);
+          g.connect(self.ctx.destination);
+          
+          o.type = 'square';
+          o.frequency.setValueAtTime(n[0], self.ctx.currentTime);
+          
+          // BGM의 전체적인 밸런스를 위해 기본 볼륨 스케일 조절
+          var noteVolume = self.volume * 0.15;
+          g.gain.setValueAtTime(noteVolume, self.ctx.currentTime);
+          g.gain.exponentialRampToValueAtTime(0.001, self.ctx.currentTime + n[1] * 0.85);
+          
+          o.start(self.ctx.currentTime);
+          o.stop(self.ctx.currentTime + n[1]);
+          
+          idx++;
+          self.bgmTimeoutId = setTimeout(next, n[1] * 1000 - 15);
+        }}
+        
+        next();
+      }},
+      
+      playSfx: function(scriptStr) {{
+        if (!this.sfxOn) return;
+        this.initCtx();
+        if (!this.ctx) return;
+        
+        var ctx = this.ctx;
+        var vol = this.volume;
+        var t = ctx.currentTime + 0.01;
+        
+        try {{
+          eval(scriptStr);
+        }} catch(e) {{
+          console.warn("SFX Execution error:", e);
+        }}
+      }}
+    }};
+  }}
+  
+  // 3. 현재 Rerun을 통해 변경된 설정(볼륨, 온오프) 즉시 전역 매니저에 동기화
+  var mgr = win.__arcade_audio_manager;
+  mgr.volume = {vol:.2f};
+  mgr.bgmOn = {bgm_on};
+  mgr.sfxOn = {sfx_on};
+  
+  if (mgr.bgmOn) {{
+    mgr.playBgm("{game}", {patterns_json});
+  }} else {{
+    mgr.stopBgm();
+  }}
 }})();
 </script>"""
-    st.markdown(html, unsafe_allow_html=True)
+    components.html(
+        html,
+        height=0,
+        scrolling=False
+    )
 
 
 def render_bgm_toggle(theme_key="galaga", game=None, compact=False):
@@ -214,8 +374,7 @@ def render_bgm_toggle(theme_key="galaga", game=None, compact=False):
             lbl = "🎵 ON" if is_bgm_on() else "🔇 OFF"
             if st.button(f"BGM {lbl}", key=f"bgm_c_{theme_key}"):
                 st.session_state[_BGM_ON_KEY] = not is_bgm_on()
-                if is_bgm_on():
-                    init_audio(game)
+                init_audio(game)  # 상태 변경 후 즉각적인 신호 전달을 위해 먼저 초기화
                 st.rerun()
         with c2:
             lbl2 = "🔊 ON" if is_sfx_on() else "🔕 OFF"
@@ -232,14 +391,13 @@ def render_bgm_toggle(theme_key="galaga", game=None, compact=False):
     )
     c1, c2 = st.columns(2)
     with c1:
-        lbl = "🔇 BGM OFF" if is_bgm_on() else "🎵 BGM ON"
+        lbl = "🎵 BGM ON" if is_bgm_on() else "🔇 BGM OFF"
         if st.button(lbl, key=f"bgm_f_{theme_key}"):
             st.session_state[_BGM_ON_KEY] = not is_bgm_on()
-            if is_bgm_on():
-                init_audio(game)
+            init_audio(game)  # 상태 변경 후 즉각적인 신호 전달을 위해 먼저 초기화
             st.rerun()
     with c2:
-        lbl2 = "🔕 SFX OFF" if is_sfx_on() else "🔊 SFX ON"
+        lbl2 = "🔊 SFX ON" if is_sfx_on() else "🔕 SFX OFF"
         if st.button(lbl2, key=f"sfx_f_{theme_key}"):
             st.session_state[_SFX_ON_KEY] = not is_sfx_on()
             st.rerun()
@@ -248,3 +406,4 @@ def render_bgm_toggle(theme_key="galaga", game=None, compact=False):
                         key=f"vol_{theme_key}", label_visibility="collapsed")
     if abs(new_vol - get_volume()) > 0.01:
         st.session_state[_VOLUME_KEY] = new_vol
+        init_audio(game)  # 볼륨 변경 시 전역 오디오 매니저에 새로운 볼륨 설정값 실시간 전달

@@ -11,14 +11,22 @@ import streamlit as st
 from common.theme       import apply_theme, THEMES
 from common.insert_coin import add_credit, credit_display
 from common.scoreboard  import render_all_rankings, get_hi_score, GAME_META
-from common.bgm         import render_bgm_toggle, play_sfx
 from common.fullscreen  import render_fullscreen_btn
 from common.credits     import render_credits_scroll, render_credits_screen
+from common.bgm import (
+    render_bgm_toggle,
+    play_sfx,
+    init_audio,
+    is_bgm_on
+)
 
 st.set_page_config(page_title="🕹️ 추억의 오락실", page_icon="🕹️",
                    layout="wide", initial_sidebar_state="expanded")
 
 apply_theme("hub")
+
+# BGM 초기화 (BGM ON/OFF 여부와 관계없이, 실시간 볼륨/스위치 동기화를 위해 매 run마다 항상 호출합니다)
+init_audio("galaga")
 
 st.markdown("""
 <style>
