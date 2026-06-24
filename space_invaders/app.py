@@ -1,5 +1,5 @@
 """
-스페이스 인베이더 (Space Invaders) - Streamlit 웹 게임
+스페이스 인베이더 (Space Invaders) - Streamlit 웹 게임 (화면 하단 버튼 중복 렌더링 및 레이아웃 틀어짐 버그 완벽 수정 버전)
 폴더: arcade/space_invaders/
 실행: streamlit run app.py --server.port 8504
 """
@@ -112,6 +112,7 @@ def init_state():
         explosions=[],       # list of [r,c] — set 사용 금지
         move_interval=8,
         nick_done=False, last_score=0,
+        gameover_sfx_played=False,
     )
     for k, v in defs.items():
         st.session_state.setdefault(k, v)
@@ -124,6 +125,7 @@ def start_game():
         ufo_col=-1, score=0, lives=3, stage=1, tick=0,
         inv_dir=1, explosions=[], move_interval=8,
         nick_done=False, si_state="playing",
+        gameover_sfx_played=False,
     )
 
 
@@ -324,45 +326,55 @@ def sidebar():
 init_state()
 sidebar()
 
+# [중요 버그 완벽 수정] 각 상태별로 100% 독립된 가상 뷰포트를 선언합니다.
+# 상태 전환 시 미사용 뷰포트를 .empty()로 제거해 브라우저 렌더링 충돌 현상을 방지합니다.
+title_viewport = st.empty()
+play_viewport = st.empty()
+gameover_viewport = st.empty()
+
 # ── TITLE ─────────────────────────────────────────────────────────
 if st.session_state.si_state == "title":
-    st.markdown('<div class="si-title">👾 SPACE INVADERS</div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align:center;color:#663322;font-family:monospace;'
-                'letter-spacing:.1em;margin-bottom:16px;">TAITO · 1978 · RETRO ARCADE</p>',
-                unsafe_allow_html=True)
-    st.markdown("---")
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        st.markdown("""
-<div style="text-align:center;padding:18px;background:#000;
-     border:2px solid #993C1D;border-radius:12px;font-family:monospace;">
-  <div style="color:#FF4444;font-size:1.3rem;margin:4px 0;">🛸 🛸 🛸 🛸 🛸</div>
-  <div style="color:#F0997B;font-size:1.3rem;margin:4px 0;">👾 👾 👾 👾 👾</div>
-  <div style="color:#EF9F27;font-size:1.3rem;margin:4px 0;">👾 👾 👾 👾 👾</div>
-  <div style="color:#FFE600;font-size:1.3rem;margin:4px 0;">🐛 🐛 🐛 🐛 🐛</div>
-  <div style="margin:10px 0;color:#33aa33;font-size:.85rem;">▓ ▓ ▓ &nbsp;&nbsp; ▓ ▓ ▓</div>
-  <div style="font-size:1.1rem;color:#33ff33;margin:6px 0;">🚀</div>
-  <div class="si-blink" style="color:#F0997B;margin-top:10px;font-size:.95rem;letter-spacing:.15em;">
-    ── INSERT COIN ──
-  </div>
-</div>""", unsafe_allow_html=True)
-        st.markdown("")
-        st.markdown("""
-<div style="display:flex;gap:14px;justify-content:center;
-     font-family:monospace;font-size:.8rem;margin:7px 0;">
-  <span style="color:#FF4444;">🛸=???점</span>
-  <span style="color:#F0997B;">👾=20점</span>
-  <span style="color:#EF9F27;">👾=20점</span>
-  <span style="color:#FFE600;">🐛=10점</span>
-</div>""", unsafe_allow_html=True)
-        if render_coin_screen(GAME, show_credits=False, free_play=True):
-            play_sfx("coin")
-            init_audio(GAME)
-            start_game()
-            st.rerun()
-    st.markdown("---")
-    render_key_badge_row(GAME)
-    render_credits_footer(GAME)
+    play_viewport.empty()
+    gameover_viewport.empty()
+
+    with title_viewport.container():
+        st.markdown('<div class="si-title">👾 SPACE INVADERS</div>', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center;color:#663322;font-family:monospace;'
+                    'letter-spacing:.1em;margin-bottom:16px;">TAITO · 1978 · RETRO ARCADE</p>',
+                    unsafe_allow_html=True)
+        st.markdown("---")
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            st.markdown("""
+    <div style="text-align:center;padding:18px;background:#000;
+         border:2px solid #993C1D;border-radius:12px;font-family:monospace;">
+      <div style="color:#FF4444;font-size:1.3rem;margin:4px 0;">🛸 🛸 🛸 🛸 🛸</div>
+      <div style="color:#F0997B;font-size:1.3rem;margin:4px 0;">👾 👾 👾 👾 👾</div>
+      <div style="color:#EF9F27;font-size:1.3rem;margin:4px 0;">👾 👾 👾 👾 👾</div>
+      <div style="color:#FFE600;font-size:1.3rem;margin:4px 0;">🐛 🐛 🐛 🐛 🐛</div>
+      <div style="margin:10px 0;color:#33aa33;font-size:.85rem;">▓ ▓ ▓ &nbsp;&nbsp; ▓ ▓ ▓</div>
+      <div style="font-size:1.1rem;color:#33ff33;margin:6px 0;">🚀</div>
+      <div class="si-blink" style="color:#F0997B;margin-top:10px;font-size:.95rem;letter-spacing:.15em;">
+        ── INSERT COIN ──
+      </div>
+    </div>""", unsafe_allow_html=True)
+            st.markdown("")
+            st.markdown("""
+    <div style="display:flex;gap:14px;justify-content:center;
+         font-family:monospace;font-size:.8rem;margin:7px 0;">
+      <span style="color:#FF4444;">🛸=???점</span>
+      <span style="color:#F0997B;">👾=20점</span>
+      <span style="color:#EF9F27;">👾=20점</span>
+      <span style="color:#FFE600;">🐛=10점</span>
+    </div>""", unsafe_allow_html=True)
+            if render_coin_screen(GAME, show_credits=False, free_play=True):
+                play_sfx("coin")
+                init_audio(GAME)
+                start_game()
+                st.rerun()
+        st.markdown("---")
+        render_key_badge_row(GAME)
+        render_credits_footer(GAME)
 
 # ── PLAYING ───────────────────────────────────────────────────────
 elif st.session_state.si_state == "playing":
@@ -391,96 +403,117 @@ elif st.session_state.si_state == "playing":
         st.session_state.move_interval = max(2, 8 - st.session_state.stage)
         play_sfx("clear")
 
-    left, mid, right = st.columns([1, 2, 1])
-    with left:
-        st.markdown(f"""
-<div class="si-panel"><div class="si-slbl">SCORE</div>
-  <div class="si-sval">{st.session_state.score:,}</div></div>
-<div class="si-panel"><div class="si-slbl">STAGE</div>
-  <div class="si-sval">{st.session_state.stage}</div></div>
-<div class="si-panel"><div class="si-slbl">LIVES</div>
-  <div style="font-size:1.2rem;color:#33ff33;">{"🚀 " * max(0, st.session_state.lives)}</div></div>
-<div class="si-panel"><div class="si-slbl">INVADERS</div>
-  <div class="si-sval" style="font-size:1.1rem;">{len(st.session_state.invaders)}</div></div>
-""", unsafe_allow_html=True)
+    title_viewport.empty()
+    gameover_viewport.empty()
 
-    with mid:
-        ufo_txt = "🛸 UFO!" if st.session_state.ufo_col != -1 else ""
-        st.markdown(
-            f'<div class="si-title" style="font-size:1rem;margin-bottom:5px;">'
-            f'👾 SPACE INVADERS · STAGE {st.session_state.stage} '
-            f'<span style="color:#FF4444;font-size:.85rem;">{ufo_txt}</span></div>',
-            unsafe_allow_html=True,
-        )
-        inner = f'<div class="si-board">{render_board()}</div>'
-        render_fullscreen_wrapper(inner, GAME, "si-board")
+    with play_viewport.container():
+        left, mid, right = st.columns([1, 2, 1])
+        with left:
+            st.markdown(f"""
+    <div class="si-panel"><div class="si-slbl">SCORE</div>
+      <div class="si-sval">{st.session_state.score:,}</div></div>
+    <div class="si-panel"><div class="si-slbl">STAGE</div>
+      <div class="si-sval">{st.session_state.stage}</div></div>
+    <div class="si-panel"><div class="si-slbl">LIVES</div>
+      <div style="font-size:1.2rem;color:#33ff33;">{"🚀 " * max(0, st.session_state.lives)}</div></div>
+    <div class="si-panel"><div class="si-slbl">INVADERS</div>
+      <div class="si-sval" style="font-size:1.1rem;">{len(st.session_state.invaders)}</div></div>
+    """, unsafe_allow_html=True)
 
-        shields = st.session_state.shields
-        shield_disp = " &nbsp; ".join(
-            f"▓×{shields[str(c)]}" if str(c) in shields else "✗"
-            for c in SHIELD_COLS
-        )
-        st.markdown(f'<div class="si-sbar">방어막: {shield_disp}</div>',
-                    unsafe_allow_html=True)
+        with mid:
+            ufo_txt = "🛸 UFO!" if st.session_state.ufo_col != -1 else ""
+            st.markdown(
+                f'<div class="si-title" style="font-size:1rem;margin-bottom:5px;">'
+                f'👾 SPACE INVADERS · STAGE {st.session_state.stage} '
+                f'<span style="color:#FF4444;font-size:.85rem;">{ufo_txt}</span></div>',
+                unsafe_allow_html=True,
+            )
+            inner = f'<div class="si-board">{render_board()}</div>'
+            render_fullscreen_wrapper(inner, GAME, "si-board")
 
-    with right:
-        hi = max(st.session_state.score, get_hi_score(GAME))
-        st.markdown(f"""
-<div class="si-panel"><div class="si-slbl">HI-SCORE</div>
-  <div class="si-sval" style="font-size:1.1rem;">{hi:,}</div></div>
-<div class="si-panel"><div class="si-slbl">UFO</div>
-  <div style="font-size:1.4rem;">{"🛸" if st.session_state.ufo_col != -1 else "—"}</div></div>
-<div class="si-panel"><div class="si-slbl">TICK</div>
-  <div class="si-sval" style="font-size:.95rem;">{st.session_state.tick}</div></div>
-""", unsafe_allow_html=True)
+            shields = st.session_state.shields
+            shield_disp = " &nbsp; ".join(
+                f"▓×{shields[str(c)]}" if str(c) in shields else "✗"
+                for c in SHIELD_COLS
+            )
+            st.markdown(f'<div class="si-sbar">방어막: {shield_disp}</div>',
+                        unsafe_allow_html=True)
 
-    st.markdown("")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        if st.button("◀◀ 왼쪽", key="si_ll"):
-            st.session_state.player_col = max(0, st.session_state.player_col - 2)
-    with c2:
-        if st.button("◀ LEFT",  key="si_l"):
-            st.session_state.player_col = max(0, st.session_state.player_col - 1)
-    with c3:
-        if st.button("🔴 FIRE!", key="si_fire"):
-            st.session_state.bullets.append([PLAYER_ROW - 1, st.session_state.player_col])
-            play_sfx("shoot")
-    with c4:
-        if st.button("RIGHT ▶", key="si_r"):
-            st.session_state.player_col = min(COLS - 1, st.session_state.player_col + 1)
-    with c5:
-        if st.button("오른쪽 ▶▶", key="si_rr"):
-            st.session_state.player_col = min(COLS - 1, st.session_state.player_col + 2)
+        with right:
+            hi = max(st.session_state.score, get_hi_score(GAME))
+            st.markdown(f"""
+    <div class="si-panel"><div class="si-slbl">HI-SCORE</div>
+      <div class="si-sval" style="font-size:1.1rem;">{hi:,}</div></div>
+    <div class="si-panel"><div class="si-slbl">UFO</div>
+      <div style="font-size:1.4rem;">{"🛸" if st.session_state.ufo_col != -1 else "—"}</div></div>
+    <div class="si-panel"><div class="si-slbl">TICK</div>
+      <div class="si-sval" style="font-size:.95rem;">{st.session_state.tick}</div></div>
+    """, unsafe_allow_html=True)
 
-    qc, _ = st.columns([1, 4])
-    with qc:
-        if st.button("⏹ 종료", key="si_quit"):
-            save_score(GAME, st.session_state.score)
-            st.session_state.last_score = st.session_state.score
-            st.session_state.si_state = "title"
-            st.rerun()
+        st.markdown("")
+        
+        # [중요] 버튼이 중복 증식하지 않도록, 반드시 play_viewport 컨테이너 안에서 빌드합니다.
+        # 조작 버튼들을 완벽한 대칭 아크 형태로 정렬하기 위해 가로 컬럼 비율 [1.5, 1, 2, 1, 1.5]과 use_container_width=True를 부여합니다.
+        c1, c2, c3, c4, c5 = st.columns([1.5, 1, 2, 1, 1.5])
+        with c1:
+            if st.button("◀◀ 왼쪽", key="si_ll", use_container_width=True):
+                st.session_state.player_col = max(0, st.session_state.player_col - 2)
+                st.rerun()
+        with c2:
+            if st.button("◀ LEFT",  key="si_l", use_container_width=True):
+                st.session_state.player_col = max(0, st.session_state.player_col - 1)
+                st.rerun()
+        with c3:
+            if st.button("🔴 FIRE!", key="si_fire", use_container_width=True):
+                st.session_state.bullets.append([PLAYER_ROW - 1, st.session_state.player_col])
+                play_sfx("shoot")
+                st.rerun()
+        with c4:
+            if st.button("RIGHT ▶", key="si_r", use_container_width=True):
+                st.session_state.player_col = min(COLS - 1, st.session_state.player_col + 1)
+                st.rerun()
+        with c5:
+            if st.button("오른쪽 ▶▶", key="si_rr", use_container_width=True):
+                st.session_state.player_col = min(COLS - 1, st.session_state.player_col + 2)
+                st.rerun()
 
-    time.sleep(0.45)
-    st.rerun()
+        # 종료 버튼 정렬 일체감 보완
+        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+        _, q_col_center, _ = st.columns([3.5, 3, 3.5])
+        with q_col_center:
+            if st.button("⏹ 종료", key="si_quit", use_container_width=True):
+                save_score(GAME, st.session_state.score)
+                st.session_state.last_score = st.session_state.score
+                st.session_state.si_state = "title"
+                st.rerun()
+
+        time.sleep(0.45)
+        st.rerun()
 
 # ── GAMEOVER ──────────────────────────────────────────────────────
 elif st.session_state.si_state == "gameover":
-    play_sfx("gameover")
-    st.markdown('<div class="si-title">💀 GAME OVER 💀</div>', unsafe_allow_html=True)
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        if not st.session_state.nick_done:
-            if render_nickname_entry(GAME, st.session_state.last_score):
-                st.session_state.nick_done = True
+    if not st.session_state.get("gameover_sfx_played", False):
+        play_sfx("gameover")
+        st.session_state.gameover_sfx_played = True
+
+    title_viewport.empty()
+    play_viewport.empty()
+
+    with gameover_viewport.container():
+        st.markdown('<div class="si-title">💀 GAME OVER 💀</div>', unsafe_allow_html=True)
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            if not st.session_state.nick_done:
+                if render_nickname_entry(GAME, st.session_state.last_score):
+                    st.session_state.nick_done = True
+                    st.rerun()
+            else:
+                render_ranking_table(GAME, highlight_score=st.session_state.last_score)
+            st.markdown("")
+            if st.button("🔄 다시 도전", key="si_retry", use_container_width=True):
+                start_game()
                 st.rerun()
-        else:
-            render_ranking_table(GAME, highlight_score=st.session_state.last_score)
-        st.markdown("")
-        if st.button("🔄 다시 도전", key="si_retry"):
-            start_game()
-            st.rerun()
-        if st.button("🏠 타이틀로",  key="si_title"):
-            st.session_state.si_state = "title"
-            st.rerun()
-    render_credits_footer(GAME)
+            if st.button("🏠 타이틀로",  key="si_title", use_container_width=True):
+                st.session_state.si_state = "title"
+                st.rerun()
+        render_credits_footer(GAME)

@@ -1,5 +1,5 @@
 """
-갤러그 (Galaga) - Streamlit 웹 게임
+갤러그 (Galaga) - Streamlit 웹 게임 (화면 하단 버튼 중복 렌더링 버그 완벽 수정 버전)
 폴더: arcade/galaga/
 실행: streamlit run app.py --server.port 8501
 """
@@ -62,6 +62,7 @@ def init_state():
         player_col=COLS // 2, bullets=[], enemy_bullets=[],
         enemies={}, tick=0, hit_cells=[],
         nick_done=False, last_score=0,
+        gameover_sfx_played=False, # 중복 효과음 제어 플래그
     )
     for k, v in defs.items():
         st.session_state.setdefault(k, v)
@@ -203,48 +204,55 @@ def sidebar():
         render_fullscreen_btn(GAME, target_id="galaga-board")
 
 
-# ── 메인 ──────────────────────────────────────────────────────────
+# ── 메인 구조 정의 ───────────────────────────────────────────────
 init_state()
 sidebar()
 
+# [중요] 모든 화면 전환과 버튼 및 레이아웃을 하나의 placeholder로 포괄하여 
+# 어떠한 상황에서도 하단 버튼이 중복 증식(Ghost DOM)하지 않도록 제어합니다.
+main_viewport = st.empty()
+
 # ── TITLE ─────────────────────────────────────────────────────────
 if st.session_state.g_state == "title":
-    st.markdown('<div class="g-title">🚀 GALAGA 갤러그</div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align:center;color:#6B6880;font-family:monospace;'
-                'letter-spacing:.1em;margin-bottom:16px;">NAMCO · 1981 · RETRO ARCADE</p>',
-                unsafe_allow_html=True)
-    st.markdown("---")
+    with main_viewport.container():
+        st.markdown('<div class="g-title">🚀 GALAGA 갤러그</div>', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center;color:#6B6880;font-family:monospace;'
+                    'letter-spacing:.1em;margin-bottom:16px;">NAMCO · 1981 · RETRO ARCADE</p>',
+                    unsafe_allow_html=True)
+        st.markdown("---")
 
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        st.markdown("""
-<div class="g-area" style="min-height:240px;display:flex;flex-direction:column;
-     align-items:center;justify-content:center;">
-  <div style="font-size:2.5rem;text-align:center;line-height:2.2;">
-    👾 🐝 👾 🐝 👾<br>🦋 🦋 🦋 🦋 🦋<br>🦟 🦟 🦟 🦟 🦟
-  </div>
-  <div class="g-blink" style="font-family:monospace;color:#AFA9EC;
-       font-size:0.95rem;margin-top:14px;letter-spacing:.2em;">
-    ── INSERT COIN ──
-  </div>
-</div>""", unsafe_allow_html=True)
-        st.markdown("")
-        if render_coin_screen(GAME, show_credits=False, free_play=True):
-            play_sfx("coin")
-            init_audio(GAME)
-            st.session_state.update(
-                g_state="playing", score=0, lives=3, stage=1,
-                player_col=COLS // 2, bullets=[], enemy_bullets=[],
-                enemies=make_enemies(), tick=0, hit_cells=[], nick_done=False,
-            )
-            st.rerun()
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            st.markdown("""
+    <div class="g-area" style="min-height:240px;display:flex;flex-direction:column;
+         align-items:center;justify-content:center;">
+      <div style="font-size:2.5rem;text-align:center;line-height:2.2;">
+        👾 🐝 👾 🐝 👾<br>🦋 🦋 🦋 🦋 🦋<br>🦟 🦟 🦟 🦟 🦟
+      </div>
+      <div class="g-blink" style="font-family:monospace;color:#AFA9EC;
+           font-size:0.95rem;margin-top:14px;letter-spacing:.2em;">
+        ── INSERT COIN ──
+      </div>
+    </div>""", unsafe_allow_html=True)
+            st.markdown("")
+            if render_coin_screen(GAME, show_credits=False, free_play=True):
+                play_sfx("coin")
+                init_audio(GAME)
+                st.session_state.update(
+                    g_state="playing", score=0, lives=3, stage=1,
+                    player_col=COLS // 2, bullets=[], enemy_bullets=[],
+                    enemies=make_enemies(), tick=0, hit_cells=[], nick_done=False,
+                    gameover_sfx_played=False,
+                )
+                st.rerun()
 
-    st.markdown("---")
-    render_key_badge_row(GAME)
-    render_credits_footer(GAME)
+        st.markdown("---")
+        render_key_badge_row(GAME)
+        render_credits_footer(GAME)
 
 # ── PLAYING ───────────────────────────────────────────────────────
 elif st.session_state.g_state == "playing":
+    # 게임 상태 업데이트 계산
     st.session_state.tick += 1
     st.session_state.hit_cells = []
     move_enemies()
@@ -253,7 +261,7 @@ elif st.session_state.g_state == "playing":
     move_enemy_bullets()
     check_invasion()
 
-    # 스테이지 클리어
+    # 스테이지 클리어 처리
     if not st.session_state.enemies and st.session_state.g_state == "playing":
         st.session_state.stage += 1
         st.session_state.enemies = make_enemies()
@@ -262,87 +270,105 @@ elif st.session_state.g_state == "playing":
         st.session_state.score += 500
         play_sfx("clear")
 
-    # 헤더
-    hc1, hc2, hc3 = st.columns([1, 3, 1])
-    with hc1:
-        st.markdown(f'<div class="g-score"><div class="g-slbl">SCORE</div>'
-                    f'<div class="g-snum">{st.session_state.score:06d}</div></div>',
-                    unsafe_allow_html=True)
-    with hc2:
-        st.markdown(f'<div class="g-title" style="font-size:1.2rem;">'
-                    f'🚀 GALAGA · STAGE {st.session_state.stage}</div>',
-                    unsafe_allow_html=True)
-    with hc3:
-        hi = max(st.session_state.score, get_hi_score(GAME))
-        st.markdown(f'<div class="g-score"><div class="g-slbl">HI-SCORE</div>'
-                    f'<div class="g-snum">{hi:06d}</div></div>',
-                    unsafe_allow_html=True)
+    with main_viewport.container():
+        # 상단 헤더 및 점수판 영역
+        hc1, hc2, hc3 = st.columns([1, 3, 1])
+        with hc1:
+            st.markdown(f'<div class="g-score"><div class="g-slbl">SCORE</div>'
+                        f'<div class="g-snum">{st.session_state.score:06d}</div></div>',
+                        unsafe_allow_html=True)
+        with hc2:
+            st.markdown(f'<div class="g-title" style="font-size:1.2rem;">'
+                        f'🚀 GALAGA · STAGE {st.session_state.stage}</div>',
+                        unsafe_allow_html=True)
+        with hc3:
+            hi = max(st.session_state.score, get_hi_score(GAME))
+            st.markdown(f'<div class="g-score"><div class="g-slbl">HI-SCORE</div>'
+                        f'<div class="g-snum">{hi:06d}</div></div>',
+                        unsafe_allow_html=True)
 
-    lives_str = "🚀 " * max(0, st.session_state.lives)
-    st.markdown(f'<div style="display:flex;gap:5px;justify-content:center;'
-                f'margin:5px 0;">{lives_str}</div>', unsafe_allow_html=True)
+        lives_str = "🚀 " * max(0, st.session_state.lives)
+        st.markdown(f'<div style="display:flex;gap:5px;justify-content:center;'
+                    f'margin:5px 0;">{lives_str}</div>', unsafe_allow_html=True)
 
-    board_html = f'<div class="g-area">{render_grid()}</div>'
-    render_fullscreen_wrapper(board_html, GAME, "galaga-board")
+        # 게임 화면 출력
+        board_html = f'<div class="g-area">{render_grid()}</div>'
+        render_fullscreen_wrapper(board_html, GAME, "galaga-board")
 
-    st.markdown("")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        if st.button("◀◀ 왼쪽", key="g_ll"):
-            st.session_state.player_col = max(0, st.session_state.player_col - 2)
-    with c2:
-        if st.button("◀ LEFT", key="g_l"):
-            st.session_state.player_col = max(0, st.session_state.player_col - 1)
-    with c3:
-        if st.button("🔴 FIRE!", key="g_fire"):
-            st.session_state.bullets.append([ROWS - 2, st.session_state.player_col])
-            play_sfx("shoot")
-    with c4:
-        if st.button("RIGHT ▶", key="g_r"):
-            st.session_state.player_col = min(COLS - 1, st.session_state.player_col + 1)
-    with c5:
-        if st.button("오른쪽 ▶▶", key="g_rr"):
-            st.session_state.player_col = min(COLS - 1, st.session_state.player_col + 2)
+        st.markdown("")
+        
+        # [중요 수정] 버튼이 중첩되지 않고 한 번만 렌더링되도록, 
+        # viewport container 내부에서만 모든 버튼 레이아웃을 엄밀하게 통제합니다.
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c1:
+            if st.button("◀◀ 왼쪽", key="g_ll"):
+                st.session_state.player_col = max(0, st.session_state.player_col - 2)
+                st.rerun()
+        with c2:
+            if st.button("◀ LEFT", key="g_l"):
+                st.session_state.player_col = max(0, st.session_state.player_col - 1)
+                st.rerun()
+        with c3:
+            if st.button("🔴 FIRE!", key="g_fire"):
+                st.session_state.bullets.append([ROWS - 2, st.session_state.player_col])
+                play_sfx("shoot")
+                st.rerun()
+        with c4:
+            if st.button("RIGHT ▶", key="g_r"):
+                st.session_state.player_col = min(COLS - 1, st.session_state.player_col + 1)
+                st.rerun()
+        with c5:
+            if st.button("오른쪽 ▶▶", key="g_rr"):
+                st.session_state.player_col = min(COLS - 1, st.session_state.player_col + 2)
+                st.rerun()
 
-    ic, qc = st.columns([4, 1])
-    with ic:
-        em_count = len(st.session_state.enemies)
-        st.caption(f"남은 적: {em_count}마리 | "
-                   f"총알: {len(st.session_state.bullets)}발 | "
-                   f"Tick: {st.session_state.tick}")
-    with qc:
-        if st.button("⏹ 종료", key="g_quit"):
-            save_score(GAME, st.session_state.score)
-            st.session_state.last_score = st.session_state.score
-            st.session_state.g_state = "title"
-            st.rerun()
+        # 하단 인포 바 및 종료 제어 구역
+        ic, qc = st.columns([4, 1])
+        with ic:
+            em_count = len(st.session_state.enemies)
+            st.caption(f"남은 적: {em_count}마리 | "
+                       f"총알: {len(st.session_state.bullets)}발 | "
+                       f"Tick: {st.session_state.tick}")
+        with qc:
+            if st.button("⏹ 종료", key="g_quit"):
+                save_score(GAME, st.session_state.score)
+                st.session_state.last_score = st.session_state.score
+                st.session_state.g_state = "title"
+                st.rerun()
 
-    time.sleep(0.5)
+    # 주기적인 화면 갱신 실행 및 딜레이 제어
+    time.sleep(0.4)
     st.rerun()
 
 # ── GAMEOVER ──────────────────────────────────────────────────────
 elif st.session_state.g_state == "gameover":
-    play_sfx("gameover")
-    st.markdown('<div class="g-title">💀 GAME OVER 💀</div>', unsafe_allow_html=True)
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        if not st.session_state.nick_done:
-            if render_nickname_entry(GAME, st.session_state.last_score):
-                st.session_state.nick_done = True
+    # 1회만 재생되도록 가드 처리
+    if not st.session_state.get("gameover_sfx_played", False):
+        play_sfx("gameover")
+        st.session_state.gameover_sfx_played = True
+
+    with main_viewport.container():
+        st.markdown('<div class="g-title">💀 GAME OVER 💀</div>', unsafe_allow_html=True)
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            if not st.session_state.nick_done:
+                if render_nickname_entry(GAME, st.session_state.last_score):
+                    st.session_state.nick_done = True
+                    st.rerun()
+            else:
+                render_ranking_table(GAME, highlight_score=st.session_state.last_score)
+
+            st.markdown("")
+            if st.button("🔄 다시 도전", key="g_retry"):
+                st.session_state.update(
+                    g_state="playing", score=0, lives=3, stage=1,
+                    player_col=COLS // 2, bullets=[], enemy_bullets=[],
+                    enemies=make_enemies(), tick=0, hit_cells=[], nick_done=False,
+                    gameover_sfx_played=False,
+                )
                 st.rerun()
-        else:
-            render_ranking_table(GAME, highlight_score=st.session_state.last_score)
+            if st.button("🏠 타이틀로", key="g_title"):
+                st.session_state.g_state = "title"
+                st.rerun()
 
-        st.markdown("")
-        if st.button("🔄 다시 도전", key="g_retry"):
-            st.session_state.update(
-                g_state="playing", score=0, lives=3, stage=1,
-                player_col=COLS // 2, bullets=[], enemy_bullets=[],
-                enemies=make_enemies(), tick=0, hit_cells=[], nick_done=False,
-            )
-            st.rerun()
-        if st.button("🏠 타이틀로", key="g_title"):
-            st.session_state.g_state = "title"
-            st.rerun()
-
-    render_credits_footer(GAME)
+        render_credits_footer(GAME)

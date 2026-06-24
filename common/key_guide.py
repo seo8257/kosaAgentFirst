@@ -1,7 +1,13 @@
-"""
-arcade/common/key_guide.py
-조작키 안내 컴포넌트 (수정 버전)
-"""
+import sys
+import os
+
+# 현재 파일(key_guide.py) 기준 프로젝트 상위 디렉토리를 찾아 sys.path에 수동으로 주입합니다.
+# 이를 통해 하위 폴더에서 단독 실행 시에도 'common' 패키지를 정상 인식합니다.
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT_DIR = os.path.dirname(_CURRENT_DIR)
+if _PARENT_DIR not in sys.path:
+    sys.path.insert(0, _PARENT_DIR)
+
 import streamlit as st
 from common.theme import THEMES
 
@@ -59,7 +65,6 @@ _KEY_MAPS = {
     },
 }
 
-
 def render_key_guide(game, theme_key=None, show_tips=True, show_common=True):
     tk  = theme_key or game
     t   = THEMES.get(tk, THEMES["galaga"])
@@ -91,6 +96,53 @@ def render_key_guide(game, theme_key=None, show_tips=True, show_common=True):
   <div style="font-size:0.77rem;color:{t['sub_text']};">⛶ 전체화면: 더블클릭</div>
 </div>"""
 
+    # 🔗 조작키 정상 작동을 보장하는 스마트 포커싱 JavaScript 탑재
+    focus_script = """
+<script>
+(function() {
+  var doc = window.parent ? window.parent.document : document;
+  
+  function restoreGameFocus() {
+    // 1. 메인 창 또는 iframe 내부의 canvas 요소 검색
+    var canvas = document.querySelector('canvas');
+    if (!canvas && window.parent && window.parent.document) {
+      canvas = window.parent.document.querySelector('canvas');
+    }
+    if (canvas) {
+      canvas.focus();
+      return;
+    }
+    
+    // 2. 만약 게임엔진이 별도의 대형 iframe 내에서 실행 중이라면 해당 iframe 포커싱
+    var iframes = doc.querySelectorAll('iframe');
+    for (var i = 0; i < iframes.length; i++) {
+      var iframe = iframes[i];
+      // 크기가 존재하고 사운드 전용(0px)이 아닌 실제 게임용 화면 iframe 감지
+      if (iframe.offsetWidth > 100 && iframe.offsetHeight > 100) {
+        iframe.focus();
+        try {
+          if (iframe.contentWindow && iframe.contentWindow.document) {
+            var innerCanvas = iframe.contentWindow.document.querySelector('canvas');
+            if (innerCanvas) {
+              innerCanvas.focus();
+            }
+          }
+        } catch(e) {}
+        break;
+      }
+    }
+  }
+
+  // 사용자가 페이지의 빈 곳, 사이드바, 가이드 등을 클릭하면 자동으로 게임 화면으로 조작 포커스 리다이렉트
+  doc.addEventListener('click', restoreGameFocus, true);
+  document.addEventListener('click', restoreGameFocus, true);
+  
+  // 컴포넌트 마운트 즉시 0.5초 대기 후 게임 포커스 자동 확보
+  setTimeout(restoreGameFocus, 500);
+})();
+</script>
+"""
+
     st.markdown(f"""
 <div style="background:{t['panel_bg']};border:1px solid {t['border']};
      border-radius:10px;padding:12px 14px;font-family:'Courier New',monospace;">
@@ -101,8 +153,8 @@ def render_key_guide(game, theme_key=None, show_tips=True, show_common=True):
   {tips_html}
   {common_html}
 </div>
+{focus_script}
 """, unsafe_allow_html=True)
-
 
 def render_key_overlay(game, theme_key=None):
     cfg = _KEY_MAPS.get(game, _KEY_MAPS["galaga"])

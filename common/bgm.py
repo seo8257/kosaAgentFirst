@@ -1,11 +1,17 @@
-"""
-arcade/common/bgm.py
-BGM 토글 & 사운드 시스템 (싱글톤 오디오 매니저 수정 버전)
-"""
+import sys
+import os
+
+# 현재 파일(bgm.py) 기준 프로젝트 상위 디렉토리를 찾아 sys.path에 수동으로 주입합니다.
+# 이를 통해 하위 폴더에서 단독 실행 시에도 'common' 패키지를 정상 인식합니다.
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT_DIR = os.path.dirname(_CURRENT_DIR)
+if _PARENT_DIR not in sys.path:
+    sys.path.insert(0, _PARENT_DIR)
+
 import streamlit as st
 from common.theme import THEMES
 import streamlit.components.v1 as components
-import json  # 패턴 데이터 직렬화를 위해 추가
+import json
 
 _BGM_ON_KEY  = "audio_bgm_on"
 _SFX_ON_KEY  = "audio_sfx_on"
@@ -33,7 +39,6 @@ def get_volume():
     return st.session_state[_VOLUME_KEY]
 
 
-# ── Web Audio 효과음 JS 스니펫 ─────────────────────────────────
 _SFX_SCRIPTS = {
     "shoot": """
         var o=ctx.createOscillator(),g=ctx.createGain();
@@ -144,7 +149,7 @@ _BGM_PATTERNS = {
 
 
 def play_sfx(sfx_name):
-    """효과음 재생 (SFX ON 상태에서만)."""
+    """효과음 재생 및 포커스 복원 가드 적용 (SFX ON 상태에서만)."""
     _ensure()
     if not is_sfx_on():
         return
@@ -159,6 +164,81 @@ def play_sfx(sfx_name):
     html = f"""
 <script>
 (function(){{
+  // [1] 호스트 iframe을 완벽하게 무력화하여 클릭 방지 및 키보드 조작 포커스 이탈 완전 예방
+  try {{
+    var frame = window.frameElement;
+    if (frame) {{
+      frame.style.position = "absolute";
+      frame.style.width = "0px";
+      frame.style.height = "0px";
+      frame.style.border = "none";
+      frame.style.pointerEvents = "none";
+      frame.style.visibility = "hidden";
+      frame.setAttribute("tabindex", "-1");
+      frame.setAttribute("aria-hidden", "true");
+    }}
+  }} catch(e) {{
+    console.warn("Unable to isolate/hide host iframe:", e);
+  }}
+
+  // [2] 예외적으로 iframe이 포커스를 가져갈 시 모든 형제 프레임(게임 캔버스)에 키보드 전파
+  ['keydown', 'keyup'].forEach(function(type) {{
+    window.addEventListener(type, function(e) {{
+      try {{
+        if (window.parent && window.parent !== window) {{
+          var eventOpts = {{
+            key: e.key,
+            code: e.code,
+            location: e.location,
+            ctrlKey: e.ctrlKey,
+            shiftKey: e.shiftKey,
+            altKey: e.altKey,
+            metaKey: e.metaKey,
+            repeat: e.repeat,
+            isComposing: e.isComposing,
+            charCode: e.charCode,
+            keyCode: e.keyCode,
+            which: e.which,
+            bubbles: true,
+            cancelable: true
+          }};
+
+          function dispatch(target) {{
+            if (!target) return;
+            try {{
+              var cloned;
+              try {{
+                cloned = new target.KeyboardEvent(type, eventOpts);
+              }} catch (err) {{
+                cloned = target.document.createEvent('KeyboardEvent');
+                var initMethod = cloned.initKeyboardEvent ? 'initKeyboardEvent' : 'initKeyEvent';
+                cloned[initMethod](type, true, true, target, e.key, e.location, e.ctrlKey, e.altKey, e.shiftKey, e.metaKey);
+              }}
+              target.dispatchEvent(cloned);
+              if (target.document) {{
+                target.document.dispatchEvent(cloned);
+              }}
+            }} catch (err) {{}}
+          }}
+
+          dispatch(window.parent);
+
+          if (window.parent.frames) {{
+            for (var i = 0; i < window.parent.frames.length; i++) {{
+              var sibling = window.parent.frames[i];
+              if (sibling !== window) {{
+                dispatch(sibling);
+              }}
+            }}
+          }}
+        }}
+      }} catch(err) {{
+        console.warn("Keyboard event forwarding failed:", err);
+      }}
+    }}, true);
+  }});
+
+  // [3] 전역 오디오 싱글톤 매니저 활용 재생
   var parentWin = null;
   try {{
     if (window.parent && window.parent.document) {{
@@ -167,11 +247,9 @@ def play_sfx(sfx_name):
   }} catch (e) {{}}
   var win = parentWin || window;
   
-  // 전역 매니저가 존재하는 경우 오디오 컨텍스트 재사용
   if (win.__arcade_audio_manager) {{
     win.__arcade_audio_manager.playSfx(`{escaped_script}`);
   }} else {{
-    // 로컬 폴백 (매니저 로드 전이거나 크로스오리진 격리 상태 대비)
     try {{
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       var vol = {vol:.2f};
@@ -189,7 +267,7 @@ def play_sfx(sfx_name):
 
 
 def init_audio(game="galaga"):
-    """BGM 초기화 및 오디오 상태 동기화 (MUTE 대응을 위해 항상 실행되어야 함)."""
+    """BGM 초기화 및 오디오 상태 동기화 (오토 포커스 차단 및 다차원 키 이벤트 포워딩 적용)."""
     _ensure()
     vol     = get_volume()
     bgm_on  = "true" if is_bgm_on() else "false"
@@ -200,7 +278,81 @@ def init_audio(game="galaga"):
     html = f"""
 <script>
 (function(){{
-  // 1. 메인 창(부모 윈도우) 참조 시도 (크로스 도메인 에러 가드 구현)
+  // [1] 호스트 iframe을 완벽하게 무력화하여 클릭 방지 및 키보드 조작 포커스 이탈 완전 예방
+  try {{
+    var frame = window.frameElement;
+    if (frame) {{
+      frame.style.position = "absolute";
+      frame.style.width = "0px";
+      frame.style.height = "0px";
+      frame.style.border = "none";
+      frame.style.pointerEvents = "none";
+      frame.style.visibility = "hidden";
+      frame.setAttribute("tabindex", "-1");
+      frame.setAttribute("aria-hidden", "true");
+    }}
+  }} catch(e) {{
+    console.warn("Unable to isolate/hide host iframe:", e);
+  }}
+
+  // [2] 예외적으로 iframe이 포커스를 가져갈 시 모든 형제 프레임(게임 캔버스)에 키보드 전파
+  ['keydown', 'keyup'].forEach(function(type) {{
+    window.addEventListener(type, function(e) {{
+      try {{
+        if (window.parent && window.parent !== window) {{
+          var eventOpts = {{
+            key: e.key,
+            code: e.code,
+            location: e.location,
+            ctrlKey: e.ctrlKey,
+            shiftKey: e.shiftKey,
+            altKey: e.altKey,
+            metaKey: e.metaKey,
+            repeat: e.repeat,
+            isComposing: e.isComposing,
+            charCode: e.charCode,
+            keyCode: e.keyCode,
+            which: e.which,
+            bubbles: true,
+            cancelable: true
+          }};
+
+          function dispatch(target) {{
+            if (!target) return;
+            try {{
+              var cloned;
+              try {{
+                cloned = new target.KeyboardEvent(type, eventOpts);
+              }} catch (err) {{
+                cloned = target.document.createEvent('KeyboardEvent');
+                var initMethod = cloned.initKeyboardEvent ? 'initKeyboardEvent' : 'initKeyEvent';
+                cloned[initMethod](type, true, true, target, e.key, e.location, e.ctrlKey, e.altKey, e.shiftKey, e.metaKey);
+              }}
+              target.dispatchEvent(cloned);
+              if (target.document) {{
+                target.document.dispatchEvent(cloned);
+              }}
+            }} catch (err) {{}}
+          }}
+
+          dispatch(window.parent);
+
+          if (window.parent.frames) {{
+            for (var i = 0; i < window.parent.frames.length; i++) {{
+              var sibling = window.parent.frames[i];
+              if (sibling !== window) {{
+                dispatch(sibling);
+              }}
+            }}
+          }}
+        }}
+      }} catch(err) {{
+        console.warn("Keyboard event forwarding failed:", err);
+      }}
+    }}, true);
+  }});
+
+  // [3] 부모 창 전역 스코프에 싱글톤 오디오 매니저 선언 (Streamlit Rerun 시 유지됨)
   var parentDoc = null;
   var parentWin = null;
   try {{
@@ -215,7 +367,6 @@ def init_audio(game="galaga"):
   var doc = parentDoc || document;
   var win = parentWin || window;
 
-  // 2. 부모 창 전역 스코프에 싱글톤 오디오 매니저 선언 (Streamlit Rerun 시 유지됨)
   if (!win.__arcade_audio_manager) {{
     win.__arcade_audio_manager = {{
       ctx: null,
@@ -239,7 +390,6 @@ def init_audio(game="galaga"):
         return this.ctx;
       }},
       
-      // 브라우저 자동 재생(Autoplay Policy) 해제를 위한 상호작용 리스너 등록
       setupUnlock: function() {{
         var self = this;
         function unlock() {{
@@ -279,7 +429,6 @@ def init_audio(game="galaga"):
         this.initCtx();
         if (!this.ctx) return;
         
-        // 이미 해당 게임 BGM이 재생 중이라면 중복 플레이 차단 (핵심 버그 수정)
         if (this.bgmActive && this.bgmCurrentGame === game) {{
           return;
         }}
@@ -294,7 +443,6 @@ def init_audio(game="galaga"):
         function next() {{
           if (!self.bgmActive || !self.bgmOn) return;
           
-          // 오디오 상태가 대기 중(suspended)이라면 자동 재생이 풀릴 때까지 대기
           if (self.ctx.state === 'suspended') {{
             self.bgmTimeoutId = setTimeout(next, 500);
             return;
@@ -309,7 +457,6 @@ def init_audio(game="galaga"):
           o.type = 'square';
           o.frequency.setValueAtTime(n[0], self.ctx.currentTime);
           
-          // BGM의 전체적인 밸런스를 위해 기본 볼륨 스케일 조절
           var noteVolume = self.volume * 0.15;
           g.gain.setValueAtTime(noteVolume, self.ctx.currentTime);
           g.gain.exponentialRampToValueAtTime(0.001, self.ctx.currentTime + n[1] * 0.85);
@@ -342,7 +489,6 @@ def init_audio(game="galaga"):
     }};
   }}
   
-  // 3. 현재 Rerun을 통해 변경된 설정(볼륨, 온오프) 즉시 전역 매니저에 동기화
   var mgr = win.__arcade_audio_manager;
   mgr.volume = {vol:.2f};
   mgr.bgmOn = {bgm_on};
@@ -374,7 +520,7 @@ def render_bgm_toggle(theme_key="galaga", game=None, compact=False):
             lbl = "🎵 ON" if is_bgm_on() else "🔇 OFF"
             if st.button(f"BGM {lbl}", key=f"bgm_c_{theme_key}"):
                 st.session_state[_BGM_ON_KEY] = not is_bgm_on()
-                init_audio(game)  # 상태 변경 후 즉각적인 신호 전달을 위해 먼저 초기화
+                init_audio(game)
                 st.rerun()
         with c2:
             lbl2 = "🔊 ON" if is_sfx_on() else "🔕 OFF"
@@ -394,7 +540,7 @@ def render_bgm_toggle(theme_key="galaga", game=None, compact=False):
         lbl = "🎵 BGM ON" if is_bgm_on() else "🔇 BGM OFF"
         if st.button(lbl, key=f"bgm_f_{theme_key}"):
             st.session_state[_BGM_ON_KEY] = not is_bgm_on()
-            init_audio(game)  # 상태 변경 후 즉각적인 신호 전달을 위해 먼저 초기화
+            init_audio(game)
             st.rerun()
     with c2:
         lbl2 = "🔊 SFX ON" if is_sfx_on() else "🔕 SFX OFF"
@@ -406,4 +552,4 @@ def render_bgm_toggle(theme_key="galaga", game=None, compact=False):
                         key=f"vol_{theme_key}", label_visibility="collapsed")
     if abs(new_vol - get_volume()) > 0.01:
         st.session_state[_VOLUME_KEY] = new_vol
-        init_audio(game)  # 볼륨 변경 시 전역 오디오 매니저에 새로운 볼륨 설정값 실시간 전달
+        init_audio(game)

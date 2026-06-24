@@ -25,7 +25,7 @@ st.set_page_config(page_title="🕹️ 추억의 오락실", page_icon="🕹️"
 
 apply_theme("hub")
 
-# BGM 초기화 (BGM ON/OFF 여부와 관계없이, 실시간 볼륨/스위치 동기화를 위해 매 run마다 항상 호출합니다)
+# BGM 초기화 (BGM ON/OFF 상태를 전역 싱글톤 오디오 매니저에 실시간 동기화하기 위해 항시 호출되도록 변경했습니다)
 init_audio("galaga")
 
 st.markdown("""
@@ -78,7 +78,7 @@ st.markdown("""
 .tg { background:rgba(83,74,183,.2);  color:#AFA9EC; border:1px solid #534AB7; }
 .tt { background:rgba(15,110,86,.2);  color:#5DCAA5; border:1px solid #0F6E56; }
 .tp { background:rgba(133,79,11,.2);  color:#EF9F27; border:1px solid #854F0B; }
-.ti { background:rgba(153,60,29,.2);  color:#F0997B; border:1px solid #993C1D; }
+.ti { background:rgba(15,110,86,.2);  color:#F0997B; border:1px solid #993C1D; }
 
 .hub-info   { background:#060606; border:1px solid #181818; border-radius:10px;
               padding:12px 16px; font-family:'Courier New',monospace;
@@ -162,7 +162,7 @@ with tab_game:
       <span class="hub-tag tg">편대</span>
       <span class="hub-tag tg">보스전</span>
     </div>
-    <a href="http://localhost:8501" target="_blank" class="card-btn gb">▶ PLAY →</a>
+    <a href="http://192.168.0.9:8501" target="_blank" class="card-btn gb">▶ PLAY →</a>
   </div>
   <div class="hub-card card-tetris">
     <div class="card-num tc">②</div>
@@ -175,7 +175,7 @@ with tab_game:
       <span class="hub-tag tt">7종 블록</span>
       <span class="hub-tag tt">홀드</span>
     </div>
-    <a href="http://localhost:8502" target="_blank" class="card-btn tb">▶ PLAY →</a>
+    <a href="http://192.168.0.9:8502" target="_blank" class="card-btn tb">▶ PLAY →</a>
   </div>
   <div class="hub-card card-pacman">
     <div class="card-num pc">③</div>
@@ -188,7 +188,7 @@ with tab_game:
       <span class="hub-tag tp">고스트 AI</span>
       <span class="hub-tag tp">파워업</span>
     </div>
-    <a href="http://localhost:8503" target="_blank" class="card-btn pb">▶ PLAY →</a>
+    <a href="http://192.168.0.9:8503" target="_blank" class="card-btn pb">▶ PLAY →</a>
   </div>
   <div class="hub-card card-invaders">
     <div class="card-num ic">④</div>
@@ -201,7 +201,7 @@ with tab_game:
       <span class="hub-tag ti">방어막</span>
       <span class="hub-tag ti">UFO</span>
     </div>
-    <a href="http://localhost:8504" target="_blank" class="card-btn ib">▶ PLAY →</a>
+    <a href="http://192.168.0.9:8504" target="_blank" class="card-btn ib">▶ PLAY →</a>
   </div>
 </div>
 """, unsafe_allow_html=True)

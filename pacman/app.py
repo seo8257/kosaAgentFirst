@@ -1,5 +1,5 @@
 """
-팩맨 (Pac-Man) - Streamlit 웹 게임
+팩맨 (Pac-Man) - Streamlit 웹 게임 (화면 하단 버튼 중복 렌더링 및 레이아웃 틀어짐 버그 완벽 수정 버전)
 폴더: arcade/pacman/
 실행: streamlit run app.py --server.port 8503
 """
@@ -138,7 +138,7 @@ def init_state():
         scared_ticks=0, score=0, lives=3, level=1, tick=0,
         fruit_pos=None, fruit_emoji="🍒", fruit_ticks=0,
         dots_left=count_dots(maze), eaten_ghosts=0,
-        nick_done=False, last_score=0,
+        nick_done=False, last_score=0, gameover_sfx_played=False,
     )
     for k, v in defs.items():
         st.session_state.setdefault(k, v)
@@ -152,7 +152,7 @@ def start_game():
         scared_ticks=0, score=0, lives=3, level=1, tick=0,
         fruit_pos=None, fruit_emoji=FRUITS[0], fruit_ticks=0,
         dots_left=count_dots(maze), eaten_ghosts=0,
-        nick_done=False, pm_state="playing",
+        nick_done=False, pm_state="playing", gameover_sfx_played=False,
     )
 
 
@@ -300,128 +300,172 @@ def sidebar():
         render_fullscreen_btn(GAME, target_id="pacman-board")
 
 
-# ── 메인 ──────────────────────────────────────────────────────────
+# ── 메인 구조 정의 ───────────────────────────────────────────────
 init_state()
 sidebar()
 
-if st.session_state.pm_state == "title":
-    st.markdown('<div class="pm-title">🟡 PAC-MAN 팩맨</div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align:center;color:#6666aa;font-family:monospace;'
-                'letter-spacing:.1em;margin-bottom:16px;">NAMCO · 1980 · RETRO ARCADE</p>',
-                unsafe_allow_html=True)
-    st.markdown("---")
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        st.markdown("""
-<div style="text-align:center;padding:18px;background:#000010;
-     border:2px solid #0000cc;border-radius:12px;">
-  <div style="font-size:1.8rem;margin:5px 0;">😮 · · · ·</div>
-  <div style="font-size:1.3rem;margin:5px 0;color:#FF4444;">👻 👻 👻 👻</div>
-  <div style="font-size:.82rem;color:#6666cc;margin:7px 0;font-family:monospace;">
-    1UP &nbsp;&nbsp; HI-SCORE<br>
-    <span style="color:#FFE600;">00000 &nbsp;&nbsp; 00000</span>
-  </div>
-  <div class="pm-blink" style="color:#FFE600;font-family:monospace;
-       font-size:.95rem;margin-top:10px;letter-spacing:.2em;">
-    ── INSERT COIN ──
-  </div>
-</div>""", unsafe_allow_html=True)
-        st.markdown("")
-        if render_coin_screen(GAME, show_credits=False, free_play=True):
-            play_sfx("coin")
-            init_audio(GAME)
-            start_game()
-            st.rerun()
-    st.markdown("---")
-    render_key_badge_row(GAME)
-    render_credits_footer(GAME)
+# [중요 버그 완벽 수정] 각 상태별로 100% 독립된 가상 뷰포트를 선언합니다.
+# 상태 전환 시 미사용 뷰포트를 .empty()로 제거해 브라우저 렌더링 충돌 현상을 방지합니다.
+title_viewport = st.empty()
+play_viewport = st.empty()
+gameover_viewport = st.empty()
 
+# ── TITLE ─────────────────────────────────────────────────────────
+if st.session_state.pm_state == "title":
+    play_viewport.empty()
+    gameover_viewport.empty()
+
+    with title_viewport.container():
+        st.markdown('<div class="pm-title">🟡 PAC-MAN 팩맨</div>', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center;color:#6666aa;font-family:monospace;'
+                    'letter-spacing:.1em;margin-bottom:16px;">NAMCO · 1980 · RETRO ARCADE</p>',
+                    unsafe_allow_html=True)
+        st.markdown("---")
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            st.markdown("""
+    <div style="text-align:center;padding:18px;background:#000010;
+         border:2px solid #0000cc;border-radius:12px;">
+      <div style="font-size:1.8rem;margin:5px 0;">😮 · · · ·</div>
+      <div style="font-size:1.3rem;margin:5px 0;color:#FF4444;">👻 👻 👻 👻</div>
+      <div style="font-size:.82rem;color:#6666cc;margin:7px 0;font-family:monospace;">
+        1UP &nbsp;&nbsp; HI-SCORE<br>
+        <span style="color:#FFE600;">00000 &nbsp;&nbsp; 00000</span>
+      </div>
+      <div class="pm-blink" style="color:#FFE600;font-family:monospace;
+           font-size:.95rem;margin-top:10px;letter-spacing:.2em;">
+        ── INSERT COIN ──
+      </div>
+    </div>""", unsafe_allow_html=True)
+            st.markdown("")
+            if render_coin_screen(GAME, show_credits=False, free_play=True):
+                play_sfx("coin")
+                init_audio(GAME)
+                start_game()
+                st.rerun()
+        st.markdown("---")
+        render_key_badge_row(GAME)
+        render_credits_footer(GAME)
+
+# ── PLAYING ───────────────────────────────────────────────────────
 elif st.session_state.pm_state == "playing":
     game_step()
 
-    left, mid, right = st.columns([1, 2.5, 1])
-    with left:
-        scared_bar = ""
-        if st.session_state.scared_ticks > 0:
-            pct = int(st.session_state.scared_ticks / 30 * 100)
-            scared_bar = (f'<div style="margin-top:5px;">'
-                          f'<div style="font-size:.7rem;color:#6666cc;">POWER</div>'
-                          f'<div style="background:#2121DE;width:{pct}%;height:5px;border-radius:2px;"></div>'
-                          f'</div>')
-        lives_str = "😮 " * max(0, st.session_state.lives)
-        hi = max(st.session_state.score, get_hi_score(GAME))
-        fd = st.session_state.fruit_emoji if st.session_state.fruit_pos else "—"
-        st.markdown(f"""
-<div class="pm-panel"><div class="pm-slbl">1UP</div>
-  <div class="pm-sval">{st.session_state.score:,}</div></div>
-<div class="pm-panel"><div class="pm-slbl">LIVES</div>
-  <div style="font-size:1.3rem;">{lives_str}</div>{scared_bar}</div>
-<div class="pm-panel"><div class="pm-slbl">LEVEL</div>
-  <div class="pm-sval">{st.session_state.level}</div></div>
-<div class="pm-panel"><div class="pm-slbl">DOTS</div>
-  <div class="pm-sval" style="font-size:1.2rem;">{st.session_state.dots_left}</div></div>
-""", unsafe_allow_html=True)
+    title_viewport.empty()
+    gameover_viewport.empty()
 
-    with mid:
-        st.markdown(f'<div class="pm-title" style="font-size:1rem;margin-bottom:5px;">'
-                    f'😮 PAC-MAN · LV.{st.session_state.level}</div>', unsafe_allow_html=True)
-        inner = f'<div class="pm-wrap">{render_maze()}</div>'
-        render_fullscreen_wrapper(inner, GAME, "pacman-board")
+    with play_viewport.container():
+        left, mid, right = st.columns([1, 2.5, 1])
+        with left:
+            scared_bar = ""
+            if st.session_state.scared_ticks > 0:
+                pct = int(st.session_state.scared_ticks / 30 * 100)
+                scared_bar = (f'<div style="margin-top:5px;">'
+                              f'<div style="font-size:.7rem;color:#6666cc;">POWER</div>'
+                              f'<div style="background:#2121DE;width:{pct}%;height:5px;border-radius:2px;"></div>'
+                              f'</div>')
+            lives_str = "😮 " * max(0, st.session_state.lives)
+            hi = max(st.session_state.score, get_hi_score(GAME))
+            fd = st.session_state.fruit_emoji if st.session_state.fruit_pos else "—"
+            st.markdown(f"""
+    <div class="pm-panel"><div class="pm-slbl">1UP</div>
+      <div class="pm-sval">{st.session_state.score:,}</div></div>
+    <div class="pm-panel"><div class="pm-slbl">LIVES</div>
+      <div style="font-size:1.3rem;">{lives_str}</div>{scared_bar}</div>
+    <div class="pm-panel"><div class="pm-slbl">LEVEL</div>
+      <div class="pm-sval">{st.session_state.level}</div></div>
+    <div class="pm-panel"><div class="pm-slbl">DOTS</div>
+      <div class="pm-sval" style="font-size:1.2rem;">{st.session_state.dots_left}</div></div>
+    """, unsafe_allow_html=True)
 
-    with right:
-        hi = max(st.session_state.score, get_hi_score(GAME))
-        fd = st.session_state.fruit_emoji if st.session_state.fruit_pos else "—"
-        st.markdown(f"""
-<div class="pm-panel"><div class="pm-slbl">HI-SCORE</div>
-  <div class="pm-sval" style="font-size:1.1rem;">{hi:,}</div></div>
-<div class="pm-panel"><div class="pm-slbl">FRUIT</div>
-  <div style="font-size:1.6rem;">{fd}</div></div>
-<div class="pm-panel"><div class="pm-slbl">SCARED</div>
-  <div class="pm-sval" style="font-size:1.1rem;">{st.session_state.scared_ticks}</div></div>
-""", unsafe_allow_html=True)
+        with mid:
+            st.markdown(f'<div class="pm-title" style="font-size:1rem;margin-bottom:5px;">'
+                        f'😮 PAC-MAN · LV.{st.session_state.level}</div>', unsafe_allow_html=True)
+            inner = f'<div class="pm-wrap">{render_maze()}</div>'
+            render_fullscreen_wrapper(inner, GAME, "pacman-board")
 
-    st.markdown("")
-    _, ub, _ = st.columns([2, 1, 2])
-    with ub:
-        if st.button("▲ UP", key="pm_up"):
-            st.session_state.pac_dir = "UP"
-    lb, _, rb = st.columns([1, 1, 1])
-    with lb:
-        if st.button("◀ LEFT", key="pm_l"):
-            st.session_state.pac_dir = "LEFT"
-    with rb:
-        if st.button("RIGHT ▶", key="pm_r"):
-            st.session_state.pac_dir = "RIGHT"
-    _, db, qb = st.columns([2, 1, 1])
-    with db:
-        if st.button("▼ DOWN", key="pm_d"):
-            st.session_state.pac_dir = "DOWN"
-    with qb:
-        if st.button("⏹ 종료", key="pm_q"):
-            save_score(GAME, st.session_state.score)
-            st.session_state.last_score = st.session_state.score
-            st.session_state.pm_state = "title"
-            st.rerun()
+        with right:
+            hi = max(st.session_state.score, get_hi_score(GAME))
+            fd = st.session_state.fruit_emoji if st.session_state.fruit_pos else "—"
+            st.markdown(f"""
+    <div class="pm-panel"><div class="pm-slbl">HI-SCORE</div>
+      <div class="pm-sval" style="font-size:1.1rem;">{hi:,}</div></div>
+    <div class="pm-panel"><div class="pm-slbl">FRUIT</div>
+      <div style="font-size:1.6rem;">{fd}</div></div>
+    <div class="pm-panel"><div class="pm-slbl">SCARED</div>
+      <div class="pm-sval" style="font-size:1.1rem;">{st.session_state.scared_ticks}</div></div>
+    """, unsafe_allow_html=True)
 
-    time.sleep(0.22)
-    st.rerun()
-
-elif st.session_state.pm_state == "gameover":
-    play_sfx("gameover")
-    st.markdown('<div class="pm-title">💀 GAME OVER 💀</div>', unsafe_allow_html=True)
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        if not st.session_state.nick_done:
-            if render_nickname_entry(GAME, st.session_state.last_score):
-                st.session_state.nick_done = True
-                st.rerun()
-        else:
-            render_ranking_table(GAME, highlight_score=st.session_state.last_score)
         st.markdown("")
-        if st.button("🔄 다시 도전", key="pm_retry"):
-            start_game()
-            st.rerun()
-        if st.button("🏠 타이틀로", key="pm_title"):
-            st.session_state.pm_state = "title"
-            st.rerun()
-    render_credits_footer(GAME)
+        
+        # [중요] 버튼이 중복 증식하지 않도록, 반드시 play_viewport 컨테이너 안에서 빌드합니다.
+        # 조작 버튼들을 완벽한 크로스(D-pad) 형태로 정렬하기 위해 동일한 그리드 비율 [2.5, 1, 1, 1, 2.5]을 사용합니다.
+        # use_container_width=True 속성을 통해 버튼들이 각 열의 너비에 맞춰 꽉 차게 정렬되도록 구성했습니다.
+        
+        # 1행: UP 버튼
+        _, _, u_col, _, _ = st.columns([2.5, 1, 1, 1, 2.5])
+        with u_col:
+            if st.button("▲ UP", key="pm_up", use_container_width=True):
+                st.session_state.pac_dir = "UP"
+                st.rerun()
+                
+        # 2행: LEFT, 중앙 데코, RIGHT 버튼
+        _, l_col, c_col, r_col, _ = st.columns([2.5, 1, 1, 1, 2.5])
+        with l_col:
+            if st.button("◀ LEFT", key="pm_l", use_container_width=True):
+                st.session_state.pac_dir = "LEFT"
+                st.rerun()
+        with c_col:
+            st.markdown("<div style='text-align:center; padding-top:6px; font-size:1.1rem; user-select:none;'>🟡</div>", unsafe_allow_html=True)
+        with r_col:
+            if st.button("RIGHT ▶", key="pm_r", use_container_width=True):
+                st.session_state.pac_dir = "RIGHT"
+                st.rerun()
+                
+        # 3행: DOWN 버튼
+        _, _, d_col, _, _ = st.columns([2.5, 1, 1, 1, 2.5])
+        with d_col:
+            if st.button("▼ DOWN", key="pm_d", use_container_width=True):
+                st.session_state.pac_dir = "DOWN"
+                st.rerun()
+                
+        # 4행: 종료 버튼 (상단 D-pad의 전체 너비인 3열에 완벽하게 정렬되도록 [2.5, 3, 2.5] 비율 배치)
+        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+        _, q_col_center, _ = st.columns([2.5, 3, 2.5])
+        with q_col_center:
+            if st.button("⏹ 종료", key="pm_q", use_container_width=True):
+                save_score(GAME, st.session_state.score)
+                st.session_state.last_score = st.session_state.score
+                st.session_state.pm_state = "title"
+                st.rerun()
+
+        time.sleep(0.22)
+        st.rerun()
+
+# ── GAMEOVER ──────────────────────────────────────────────────────
+elif st.session_state.pm_state == "gameover":
+    if not st.session_state.get("gameover_sfx_played", False):
+        play_sfx("gameover")
+        st.session_state.gameover_sfx_played = True
+
+    title_viewport.empty()
+    play_viewport.empty()
+
+    with gameover_viewport.container():
+        st.markdown('<div class="pm-title">💀 GAME OVER 💀</div>', unsafe_allow_html=True)
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            if not st.session_state.nick_done:
+                if render_nickname_entry(GAME, st.session_state.last_score):
+                    st.session_state.nick_done = True
+                    st.rerun()
+            else:
+                render_ranking_table(GAME, highlight_score=st.session_state.last_score)
+            st.markdown("")
+            if st.button("🔄 다시 도전", key="pm_retry"):
+                start_game()
+                st.rerun()
+            if st.button("🏠 타이틀로", key="pm_title"):
+                st.session_state.pm_state = "title"
+                st.rerun()
+        render_credits_footer(GAME)

@@ -1,5 +1,5 @@
 """
-테트리스 (Tetris) - Streamlit 웹 게임
+테트리스 (Tetris) - Streamlit 웹 게임 (화면 하단 버튼 중복 렌더링 버그 완벽 수정 버전)
 폴더: arcade/tetris/
 실행: streamlit run app.py --server.port 8502
 """
@@ -129,6 +129,7 @@ def init_state():
         t_state="title", board=new_board(), current=None,
         next_piece=None, score=0, lines=0, level=1, tick=0,
         held=None, hold_used=False, nick_done=False, last_score=0,
+        gameover_sfx_played=False,
     )
     for k, v in defs.items():
         st.session_state.setdefault(k, v)
@@ -140,6 +141,7 @@ def start_game():
         next_piece=rand_piece(), score=0, lines=0,
         level=1, tick=0, held=None, hold_used=False,
         nick_done=False, t_state="playing",
+        gameover_sfx_played=False,
     )
 
 
@@ -231,156 +233,186 @@ def sidebar():
         render_fullscreen_btn(GAME, target_id="tetris-board")
 
 
-# ── 메인 ──────────────────────────────────────────────────────────
+# ── 메인 구조 정의 ───────────────────────────────────────────────
 init_state()
 sidebar()
 
+# [중요 버그 완벽 수정] 각 상태별로 100% 분리된 독립형 뷰포트를 선언합니다.
+# 상태가 전환되면 사용하지 않는 나머지 뷰포트를 무조건 .empty() 시켜 브라우저 DOM 캐싱 중복 오류를 예방합니다.
+title_viewport = st.empty()
+play_viewport = st.empty()
+gameover_viewport = st.empty()
+
 # ── TITLE ─────────────────────────────────────────────────────────
 if st.session_state.t_state == "title":
-    st.markdown('<div class="t-title">🧱 TETRIS 테트리스</div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align:center;color:#5DCAA5;font-family:monospace;'
-                'letter-spacing:.1em;margin-bottom:16px;">ALEXEY PAJITNOV · 1984</p>',
-                unsafe_allow_html=True)
-    st.markdown("---")
-    _, col, _ = st.columns([1, 1.5, 1])
-    with col:
-        st.markdown("""
-<div style="text-align:center;padding:20px;background:#050510;
-     border:2px solid #5DCAA5;border-radius:12px;">
-  <div style="display:flex;justify-content:center;gap:3px;margin:3px 0;">
-    <div class="tc tc-I" style="width:24px;height:24px;"></div>
-    <div class="tc tc-I" style="width:24px;height:24px;"></div>
-    <div class="tc tc-I" style="width:24px;height:24px;"></div>
-    <div class="tc tc-I" style="width:24px;height:24px;"></div>
-  </div>
-  <div style="display:flex;justify-content:center;gap:3px;margin:3px 0;">
-    <div class="tc tc-T" style="width:24px;height:24px;"></div>
-    <div class="tc tc-T" style="width:24px;height:24px;"></div>
-    <div class="tc tc-T" style="width:24px;height:24px;"></div>
-  </div>
-  <div style="display:flex;justify-content:center;gap:3px;margin:3px 0;">
-    <div class="tc tc-S" style="width:24px;height:24px;"></div>
-    <div class="tc tc-S" style="width:24px;height:24px;"></div>
-    <div class="tc tc-Z" style="width:24px;height:24px;"></div>
-    <div class="tc tc-Z" style="width:24px;height:24px;"></div>
-  </div>
-  <div class="t-blink" style="font-family:monospace;color:#5DCAA5;
-       font-size:0.95rem;margin-top:14px;letter-spacing:.2em;">
-    ── INSERT COIN ──
-  </div>
-</div>""", unsafe_allow_html=True)
-        st.markdown("")
-        if render_coin_screen(GAME, show_credits=False, free_play=True):
-            play_sfx("coin")
-            init_audio(GAME)
-            start_game()
-            st.rerun()
-    st.markdown("---")
-    render_key_badge_row(GAME)
-    render_credits_footer(GAME)
+    # 실행하지 않는 뷰포트 영역 완전 초기화 및 클리어
+    play_viewport.empty()
+    gameover_viewport.empty()
+    
+    with title_viewport.container():
+        st.markdown('<div class="t-title">🧱 TETRIS 테트리스</div>', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center;color:#5DCAA5;font-family:monospace;'
+                    'letter-spacing:.1em;margin-bottom:16px;">ALEXEY PAJITNOV · 1984</p>',
+                    unsafe_allow_html=True)
+        st.markdown("---")
+        _, col, _ = st.columns([1, 1.5, 1])
+        with col:
+            st.markdown("""
+    <div style="text-align:center;padding:20px;background:#050510;
+         border:2px solid #5DCAA5;border-radius:12px;">
+      <div style="display:flex;justify-content:center;gap:3px;margin:3px 0;">
+        <div class="tc tc-I" style="width:24px;height:24px;"></div>
+        <div class="tc tc-I" style="width:24px;height:24px;"></div>
+        <div class="tc tc-I" style="width:24px;height:24px;"></div>
+        <div class="tc tc-I" style="width:24px;height:24px;"></div>
+      </div>
+      <div style="display:flex;justify-content:center;gap:3px;margin:3px 0;">
+        <div class="tc tc-T" style="width:24px;height:24px;"></div>
+        <div class="tc tc-T" style="width:24px;height:24px;"></div>
+        <div class="tc tc-T" style="width:24px;height:24px;"></div>
+      </div>
+      <div style="display:flex;justify-content:center;gap:3px;margin:3px 0;">
+        <div class="tc tc-S" style="width:24px;height:24px;"></div>
+        <div class="tc tc-S" style="width:24px;height:24px;"></div>
+        <div class="tc tc-Z" style="width:24px;height:24px;"></div>
+        <div class="tc tc-Z" style="width:24px;height:24px;"></div>
+      </div>
+      <div class="t-blink" style="font-family:monospace;color:#5DCAA5;
+           font-size:0.95rem;margin-top:14px;letter-spacing:.2em;">
+        ── INSERT COIN ──
+      </div>
+    </div>""", unsafe_allow_html=True)
+            st.markdown("")
+            if render_coin_screen(GAME, show_credits=False, free_play=True):
+                play_sfx("coin")
+                init_audio(GAME)
+                start_game()
+                st.rerun()
+        st.markdown("---")
+        render_key_badge_row(GAME)
+        render_credits_footer(GAME)
 
 # ── PLAYING ───────────────────────────────────────────────────────
 elif st.session_state.t_state == "playing":
     game_step()
+    
+    # 이전 타이틀 찌꺼기 및 게임오버 요소를 완벽하게 증발시킵니다.
+    title_viewport.empty()
+    gameover_viewport.empty()
 
-    left, mid, right = st.columns([1, 2, 1])
-    with left:
-        held_html = next_html(st.session_state.held)
-        st.markdown(f"""
-<div class="t-panel"><div class="t-plbl">SCORE</div>
-  <div class="t-pval">{st.session_state.score:,}</div></div>
-<div class="t-panel"><div class="t-plbl">LINES</div>
-  <div class="t-pval">{st.session_state.lines}</div></div>
-<div class="t-panel"><div class="t-plbl">LEVEL</div>
-  <div class="t-pval">{st.session_state.level}</div></div>
-<div class="t-panel"><div class="t-plbl">HOLD</div>
-  <div style="margin-top:5px;">{held_html}</div></div>
-""", unsafe_allow_html=True)
+    with play_viewport.container():
+        left, mid, right = st.columns([1, 2, 1])
+        with left:
+            held_html = next_html(st.session_state.held)
+            st.markdown(f"""
+    <div class="t-panel"><div class="t-plbl">SCORE</div>
+      <div class="t-pval">{st.session_state.score:,}</div></div>
+    <div class="t-panel"><div class="t-plbl">LINES</div>
+      <div class="t-pval">{st.session_state.lines}</div></div>
+    <div class="t-panel"><div class="t-plbl">LEVEL</div>
+      <div class="t-pval">{st.session_state.level}</div></div>
+    <div class="t-panel"><div class="t-plbl">HOLD</div>
+      <div style="margin-top:5px;">{held_html}</div></div>
+    """, unsafe_allow_html=True)
 
-    with mid:
-        st.markdown(f'<div class="t-title" style="font-size:1.1rem;margin-bottom:6px;">'
-                    f'🧱 TETRIS · LV.{st.session_state.level}</div>', unsafe_allow_html=True)
-        inner = f'<div class="t-wrap">{board_html()}</div>'
-        render_fullscreen_wrapper(inner, GAME, "tetris-board")
+        with mid:
+            st.markdown(f'<div class="t-title" style="font-size:1.1rem;margin-bottom:6px;">'
+                        f'🧱 TETRIS · LV.{st.session_state.level}</div>', unsafe_allow_html=True)
+            inner = f'<div class="t-wrap">{board_html()}</div>'
+            render_fullscreen_wrapper(inner, GAME, "tetris-board")
 
-    with right:
-        hi = max(st.session_state.score, get_hi_score(GAME))
-        st.markdown(f"""
-<div class="t-panel"><div class="t-plbl">NEXT</div>
-  <div style="margin-top:5px;">{next_html(st.session_state.next_piece)}</div></div>
-<div class="t-panel"><div class="t-plbl">HI-SCORE</div>
-  <div class="t-pval" style="font-size:1.2rem;">{hi:,}</div></div>
-""", unsafe_allow_html=True)
+        with right:
+            hi = max(st.session_state.score, get_hi_score(GAME))
+            st.markdown(f"""
+    <div class="t-panel"><div class="t-plbl">NEXT</div>
+      <div style="margin-top:5px;">{next_html(st.session_state.next_piece)}</div></div>
+    <div class="t-panel"><div class="t-plbl">HI-SCORE</div>
+      <div class="t-pval" style="font-size:1.2rem;">{hi:,}</div></div>
+    """, unsafe_allow_html=True)
 
-    st.markdown("")
-    p = st.session_state.current
-    board = st.session_state.board
-    b1, b2, b3, b4, b5, b6 = st.columns(6)
-    with b1:
-        if st.button("◀ LEFT", key="t_ml"):
-            if valid(board, p["shape"], p["row"], p["col"] - 1):
-                p["col"] -= 1
-    with b2:
-        if st.button("RIGHT ▶", key="t_mr"):
-            if valid(board, p["shape"], p["row"], p["col"] + 1):
-                p["col"] += 1
-    with b3:
-        if st.button("↺ ROT", key="t_rot"):
-            ns = rotate(p["shape"])
-            if valid(board, ns, p["row"], p["col"]):
-                p["shape"] = ns
-    with b4:
-        if st.button("▼ SOFT", key="t_sd"):
-            if valid(board, p["shape"], p["row"] + 1, p["col"]):
-                p["row"] += 1
-                st.session_state.score += 1
-    with b5:
-        if st.button("⬇ HARD", key="t_hd"):
-            gr = ghost_row(board, p)
-            pts = (gr - p["row"]) * 2
-            p["row"] = gr
-            st.session_state.board = place(board, p)
-            st.session_state.board, cl = clear_lines(st.session_state.board)
-            if cl > 0:
-                play_sfx("line_clear")
-            st.session_state.score += SCORE_TABLE.get(cl, 0) * st.session_state.level + pts
-            st.session_state.lines += cl
-            st.session_state.level = st.session_state.lines // 10 + 1
-            st.session_state.current = st.session_state.next_piece
-            st.session_state.next_piece = rand_piece()
-            st.session_state.hold_used = False
-            if not valid(st.session_state.board, st.session_state.current["shape"],
-                         st.session_state.current["row"], st.session_state.current["col"]):
+        st.markdown("")
+        p = st.session_state.current
+        board = st.session_state.board
+        
+        b1, b2, b3, b4, b5, b6 = st.columns(6)
+        with b1:
+            if st.button("◀ LEFT", key="t_ml"):
+                if valid(board, p["shape"], p["row"], p["col"] - 1):
+                    p["col"] -= 1
+                    st.rerun()
+        with b2:
+            if st.button("RIGHT ▶", key="t_mr"):
+                if valid(board, p["shape"], p["row"], p["col"] + 1):
+                    p["col"] += 1
+                    st.rerun()
+        with b3:
+            if st.button("↺ ROT", key="t_rot"):
+                ns = rotate(p["shape"])
+                if valid(board, ns, p["row"], p["col"]):
+                    p["shape"] = ns
+                    st.rerun()
+        with b4:
+            if st.button("▼ SOFT", key="t_sd"):
+                if valid(board, p["shape"], p["row"] + 1, p["col"]):
+                    p["row"] += 1
+                    st.session_state.score += 1
+                    st.rerun()
+        with b5:
+            if st.button("⬇ HARD", key="t_hd"):
+                gr = ghost_row(board, p)
+                pts = (gr - p["row"]) * 2
+                p["row"] = gr
+                st.session_state.board = place(board, p)
+                st.session_state.board, cl = clear_lines(st.session_state.board)
+                if cl > 0:
+                    play_sfx("line_clear")
+                st.session_state.score += SCORE_TABLE.get(cl, 0) * st.session_state.level + pts
+                st.session_state.lines += cl
+                st.session_state.level = st.session_state.lines // 10 + 1
+                st.session_state.current = st.session_state.next_piece
+                st.session_state.next_piece = rand_piece()
+                st.session_state.hold_used = False
+                if not valid(st.session_state.board, st.session_state.current["shape"],
+                             st.session_state.current["row"], st.session_state.current["col"]):
+                    st.session_state.last_score = st.session_state.score
+                    st.session_state.t_state = "gameover"
+                st.rerun()
+        with b6:
+            if st.button("⏹ 종료", key="t_quit"):
+                save_score(GAME, st.session_state.score)
                 st.session_state.last_score = st.session_state.score
-                st.session_state.t_state = "gameover"
-    with b6:
-        if st.button("⏹ 종료", key="t_quit"):
-            save_score(GAME, st.session_state.score)
-            st.session_state.last_score = st.session_state.score
-            st.session_state.t_state = "title"
-            st.rerun()
+                st.session_state.t_state = "title"
+                st.rerun()
 
-    spd = max(0.25, 1.0 - st.session_state.level * 0.07)
-    time.sleep(spd)
-    st.rerun()
+        spd = max(0.25, 1.0 - st.session_state.level * 0.07)
+        time.sleep(spd)
+        st.rerun()
 
 # ── GAMEOVER ──────────────────────────────────────────────────────
 elif st.session_state.t_state == "gameover":
-    play_sfx("gameover")
-    st.markdown('<div class="t-title">💔 GAME OVER</div>', unsafe_allow_html=True)
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        if not st.session_state.nick_done:
-            if render_nickname_entry(GAME, st.session_state.last_score):
-                st.session_state.nick_done = True
+    if not st.session_state.get("gameover_sfx_played", False):
+        play_sfx("gameover")
+        st.session_state.gameover_sfx_played = True
+
+    # 게임 진행중인 뷰포트와 타이틀 뷰포트 완전 박멸
+    title_viewport.empty()
+    play_viewport.empty()
+
+    with gameover_viewport.container():
+        st.markdown('<div class="t-title">💔 GAME OVER</div>', unsafe_allow_html=True)
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            if not st.session_state.nick_done:
+                if render_nickname_entry(GAME, st.session_state.last_score):
+                    st.session_state.nick_done = True
+                    st.rerun()
+            else:
+                render_ranking_table(GAME, highlight_score=st.session_state.last_score)
+            st.markdown("")
+            if st.button("🔄 다시 도전", key="t_retry"):
+                start_game()
                 st.rerun()
-        else:
-            render_ranking_table(GAME, highlight_score=st.session_state.last_score)
-        st.markdown("")
-        if st.button("🔄 다시 도전", key="t_retry"):
-            start_game()
-            st.rerun()
-        if st.button("🏠 타이틀로", key="t_title"):
-            st.session_state.t_state = "title"
-            st.rerun()
-    render_credits_footer(GAME)
+            if st.button("🏠 타이틀로", key="t_title"):
+                st.session_state.t_state = "title"
+                st.rerun()
+        render_credits_footer(GAME)
